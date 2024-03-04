@@ -1,14 +1,25 @@
 import React, { useState } from 'react';
 import { Button, Flex, Input, Select, Typography } from 'antd';
+import axios from 'axios';
 import './index.css';
 import PageLayout from './PageLayout';
 import SectionDivider from './SectionDivider';
+import formatBytes from './Utils';
 
 
-const { Paragraph, Text, Title } = Typography;
+const { Link, Paragraph, Text, Title } = Typography;
 const { TextArea } = Input;
 
 const App: React.FC = () => {
+
+  const maxRequestSize : number = (() => {
+    const size = parseInt(process.env.REACT_APP_CLICKHOUSE_LAMBDA_API_MAX_REQUEST_SIZE);
+    // AWS HTTP APIs are metered in 512 KB increments. 
+    return size > 0 ? size : (512 - 4) * 1024; // Reserve 4 KB for headers
+  })();
+
+  const inputFormats = ['CSV', 'TSV', 'Values', 'JSON', 'JSONEachRow'];
+  const outputFormats = ['CSV', 'TSV', 'Values', 'JSON', 'JSONEachRow', 'SQLInsert', 'Vertical', 'PrettySpace'];
 
   const [queryText, setQueryText] = useState('');
   const [inputFormat, setInputFormat] = useState('CSV');
@@ -37,9 +48,42 @@ const App: React.FC = () => {
     setOutputFormat(value);
   };
 
-  // TODO: Implement query handler that send request to API Gateway connected to Lambda
   const executeQuery = () => {
-    setQueryResult(`Query: ${queryText}\nInput format: ${inputFormat}\nInput data: ${inputData}\nOutput format: ${outputFormat}\n`);
+
+    if (queryText.length == 0)
+    {
+      setQueryResult('Query is not specified');
+      return;
+    }
+
+    const request = JSON.stringify({
+      clickHouse: {
+        query: queryText,
+        outputFormat: outputFormat,
+        inputFormat: inputFormat,
+        structure: inputStructure,
+        data: inputData
+      } }
+    );
+
+    if (request.length > maxRequestSize)
+    {
+      setQueryResult(`The request size ${formatBytes(request.length)} exceeds maximal amount ${formatBytes(maxRequestSize)}`);
+      return;
+    }
+
+    axios.post(process.env.REACT_APP_CLICKHOUSE_LAMBDA_API_URL, request )
+      .then(response => {
+        if ('data' in response.data)
+          setQueryResult(response.data.data);
+        else if ('error' in response.data)
+          setQueryResult(response.data.error);
+        else
+          throw new Error(`Unsupported response format: ${response.data}`);
+      })
+      .catch(error => {
+        setQueryResult(`Error occurred while fetching data: ${error}`);
+      });
   };
 
   return  (
@@ -53,7 +97,10 @@ const App: React.FC = () => {
             <Text code> Input </Text> field can be used in queries. Additionally, no provisioned concurrency is
             configured for the lambda. As a result, the first request may be delayed due to lambda initialization,
             which can take about 5 seconds.
-          </Paragraph>    
+          </Paragraph>
+          <Link href="https://clickhouse.com/docs/en/sql-reference" target="_blank">
+            ClickHouse SQL Reference
+          </Link>
         </>
       }
       topLeftContent={
@@ -73,10 +120,9 @@ const App: React.FC = () => {
             <Select
               style={{ width: 120 }}
               defaultValue="CSV"
-              options={[
-                { value: 'CSV', label: 'CSV' },
-                { value: 'TSV', label: 'TSV' },
-              ]}
+              options={inputFormats.map((option, index) => (
+                { value: option }
+              ))}
               value={inputFormat} onChange={onInputFormatChange}
             />
             <Input placeholder="Structure: a int, b int" allowClear 
@@ -95,10 +141,9 @@ const App: React.FC = () => {
           <Select
             defaultValue="CSV"
             style={{ width: 120 }}
-            options={[
-              { value: 'CSV', label: 'CSV' },
-              { value: 'TSV', label: 'TSV' },
-            ]}
+            options={outputFormats.map((option, index) => (
+              { value: option }
+            ))}
             value={outputFormat} onChange={onOutputFormatChange}
           />
           <TextArea
