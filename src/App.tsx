@@ -50,7 +50,7 @@ const App: React.FC = () => {
 
   const executeQuery = () => {
 
-    if (queryText.length == 0)
+    if (queryText.length === 0)
     {
       setQueryResult('Query is not specified');
       return;
